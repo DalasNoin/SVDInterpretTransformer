@@ -1,0 +1,8 @@
+nodejs==16
+torch
+transformers
+datasets
+seaborn
+matplotlib
+tabulate
+git+https://github.com/DalasNoin/PySvelte.git
