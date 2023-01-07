@@ -1,3 +1,5 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import svd_directions
 
 # model, tokenizer, emb, device = svd_directions.get_model_tokenizer_embedding()
@@ -12,7 +14,11 @@ svd_transformer = svd_directions.SVDTransformer(model_name="gpt2-medium")
 
 svd_transformer.OV_top_singular_vectors(layer_idx=22, head_idx=10,k=20, N_singular_vectors=15, use_visualization=True)
 svd_transformer.random_top_singular_vectors()
+svd_transformer.plot_singular_value_distribution(layer_idx = 22, head_idx = 10)
+svd_transformer.MLP_K_top_singular_vectors(layer_idx = 22, k=20, N_singular_vectors= 50)
 
+
+svd_transformer.plot_all_MLP_singular_values(use_log_scale=False)
 
 # OV_top_singular_vectors(W_V_heads, W_O_heads, emb, layer_idx=22, head_idx=15,N_singular_vectors=15,k=20, all_tokens = all_tokens)
 

@@ -55,9 +55,7 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     emb = model.get_output_embeddings().weight.data.T.detach()
     return model, tokenizer, emb, device
-
-#model, tokenizer, emb, device = get_model_tokenizer_embedding()
-#my_tokenizer = tokenizer
+    
 
 class SVDTransformer:
     """Class that makes it easy to apply SVD to a transformer model"""
@@ -69,6 +67,7 @@ class SVDTransformer:
         self.W_Q_heads, self.W_K_heads, self.W_V_heads, self.W_O_heads = self.get_attention_heads()
         self.all_tokens = [self.tokenizer.decode([i]) for i in range(self.tokenizer.vocab_size)]
 
+    ## These functions prepare the data for SVD
 
     def get_model_info(self):
         num_layers = self.model.config.n_layer
@@ -116,6 +115,8 @@ class SVDTransformer:
         W_K_heads = W_K.reshape(self.num_layers, self.hidden_dim, self.num_heads, self.head_size).permute(0, 2, 1, 3)
         return W_Q_heads, W_K_heads, W_V_heads, W_O_heads
 
+    ## These functions apply SVD to the data
+
     def top_singular_vectors(self, mat, k = 20, N_singular_vectors = 10, with_negative = False,use_visualization=True, filter="topk"):
         U,S,V = torch.linalg.svd(mat)
         Vs = []
@@ -139,20 +140,6 @@ class SVDTransformer:
             else:
                 Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True, tokenizer=self.tokenizer) for i in range(len(Vs))]
                 print(tabulate([*zip(*Vs)]))
-
-    def plot_MLP_singular_vectors(self, K,layer_idx, max_rank=None):
-        W_matrix = K[layer_idx, :,:]
-        U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
-        if not max_rank:
-            max_rank = len(S)
-        if max_rank > len(S):
-            max_rank = len(S) -1
-        plt.plot(S[0:max_rank].detach().cpu().numpy())
-        plt.yscale('log')
-        plt.ylabel("Singular value")
-        plt.xlabel("Rank")
-        plt.title("Distribution of the singular vectors")
-        plt.show()
 
     def OV_top_singular_vectors(self, layer_idx, head_idx, k=20, N_singular_vectors=10, use_visualization=True, with_negative=False, filter="topk", return_OV=False):
         W_V_tmp, W_O_tmp = self.W_V_heads[layer_idx, head_idx, :], self.W_O_heads[layer_idx, head_idx]
@@ -183,6 +170,10 @@ class SVDTransformer:
             return OV
 
     def random_top_singular_vectors(self,k=20, N=10, use_visualization = True):
+        """
+        This function computes the top singular vectors of a random matrix and plots the top k tokens for each singular vector.
+        The purpose is for comparison with the singular values of the weights of the model.
+        """
         A = torch.randn(size=(1024,1024)).to(self.device)
         U,S,V = torch.linalg.svd(A)
         Vs = []
@@ -196,21 +187,25 @@ class SVDTransformer:
             Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True) for i in range(len(Vs))]
             print(tabulate([*zip(*Vs)]))
 
-    def plot_singular_value_distribution(self, layer_idx, head_idx, max_rank= 100):
+    def plot_singular_value_distribution(self, layer_idx, head_idx, max_rank=None, use_log_scale=False):
+        if max_rank is None:
+            max_rank = self.head_size
         W_V_tmp, W_O_tmp = self.W_V_heads[layer_idx, head_idx, :], self.W_O_heads[layer_idx, head_idx]
         OV = W_V_tmp @ W_O_tmp
         U,S,V = torch.linalg.svd(OV)
         if max_rank > len(S):
             max_rank = len(S) -1
         plt.plot(S[0:max_rank].detach().cpu().numpy())
-        plt.yscale('log')
+        if use_log_scale:
+            plt.yscale('log')
         plt.ylabel("Singular value")
         plt.xlabel("Rank")
         plt.title("Distribution of the singular vectors")
         plt.show()
 
-    def MLP_K_top_singular_vectors(self, K, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True):
-        W_matrix = K[layer_idx, :,:]
+
+    def MLP_K_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True):
+        W_matrix = self.K_heads[layer_idx, :,:]
         U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
         Vs = []
         for i in range(N_singular_vectors):
@@ -234,21 +229,41 @@ class SVDTransformer:
                 Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True) for i in range(len(Vs))]
                 print(tabulate([*zip(*Vs)]))
 
-    def plot_all_MLP_singular_vectors(self,K,max_rank=None):
+    
+    def plot_MLP_singular_values(self,layer_idx, max_rank=None, use_log_scale=True):
+        W_matrix = self.K_heads[layer_idx, :,:]
+        U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
+        if not max_rank:
+            max_rank = len(S)
+        if max_rank > len(S):
+            max_rank = len(S) -1
+        plt.plot(S[0:max_rank].detach().cpu().numpy())
+        if use_log_scale:
+            plt.yscale('log')
+        plt.ylabel("Singular value")
+        plt.xlabel("Rank")
+        plt.title("Distribution of the singular values")
+        plt.show()
+
+    def plot_all_MLP_singular_values(self, max_rank=None, use_log_scale=True):
+        """
+        plots the singular value distribution of the mlps.
+        """
         fig = plt.figure()
         ax = plt.subplot(111)
         for i in range(self.num_layers):
-            W_matrix = K[i, :,:]
+            W_matrix = self.K_heads[i, :,:]
             U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
             if not max_rank:
                 max_rank = len(S)
             if max_rank > len(S):
                 max_rank = len(S) -1
             plt.plot(S[0:max_rank].detach().cpu().numpy(), label="Block " + str(i))
-        plt.yscale('log')
+        if use_log_scale:
+            plt.yscale('log')
         plt.ylabel("Singular value")
         plt.xlabel("Rank")
-        plt.title("Distribution of the singular vectors")
+        plt.title("Distribution of the singular values")
         box = ax.get_position()
         ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),fontsize=10)
