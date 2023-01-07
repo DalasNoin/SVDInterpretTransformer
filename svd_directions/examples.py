@@ -1,14 +1,17 @@
 import svd_directions
 
-model, tokenizer, emb, device = svd_directions.get_model_tokenizer_embedding()
-my_tokenizer = tokenizer  # ?
-num_layers, num_heads, hidden_dim, head_size = svd_directions.get_model_info(model)
-all_tokens = [tokenizer.decode([i]) for i in range(tokenizer.vocab_size)]
+# model, tokenizer, emb, device = svd_directions.get_model_tokenizer_embedding()
+# my_tokenizer = tokenizer  # ?
+# num_layers, num_heads, hidden_dim, head_size = svd_directions.get_model_info(model)
+# all_tokens = [tokenizer.decode([i]) for i in range(tokenizer.vocab_size)]
 
-K,V = svd_directions.get_mlp_weights(model, num_layers = num_layers, hidden_dim = hidden_dim)
-W_Q_heads, W_K_heads, W_V_heads, W_O_heads = svd_directions.get_attention_heads(model, num_layers=num_layers, hidden_dim=hidden_dim, num_heads=num_heads, head_size = head_size)
+# K,V = svd_directions.get_mlp_weights(model, num_layers = num_layers, hidden_dim = hidden_dim)
+# W_Q_heads, W_K_heads, W_V_heads, W_O_heads = svd_directions.get_attention_heads(model, num_layers=num_layers, hidden_dim=hidden_dim, num_heads=num_heads, head_size = head_size)
 
-svd_directions.OV_top_singular_vectors(W_V_heads, W_O_heads, emb, layer_idx=22, head_idx=10,k=20, N_singular_vectors=15, all_tokens = all_tokens, use_visualization=True)
+svd_transformer = svd_directions.SVDTransformer(model_name="gpt2-medium")
+
+svd_transformer.OV_top_singular_vectors(layer_idx=22, head_idx=10,k=20, N_singular_vectors=15, use_visualization=True)
+svd_transformer.random_top_singular_vectors()
 
 
 # OV_top_singular_vectors(W_V_heads, W_O_heads, emb, layer_idx=22, head_idx=15,N_singular_vectors=15,k=20, all_tokens = all_tokens)

@@ -101,3 +101,12 @@ def top_matrix_tokens(mat, k=100, tokenizer=None, rel_thresh=None, thresh=None,
             res_.append((x1, x2, mat[i1][i2].item()))
         res = res_    
     return res
+
+def cosine_sim(x,y):
+    return torch.dot(x,y) / (torch.norm(x) * torch.norm(y))
+
+def normalize_and_entropy(V, eps=1e-6):
+    absV = torch.abs(V)
+    normV = absV / torch.sum(absV)
+    entropy = torch.sum(normV * torch.log(normV + eps)).item()
+    return -entropy
