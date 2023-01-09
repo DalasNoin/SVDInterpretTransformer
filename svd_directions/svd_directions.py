@@ -8,7 +8,7 @@ from copy import deepcopy
 # from tqdm.auto import tqdm, trange
 import re
 from collections import defaultdict
-from transformers import AutoModelForCausalLM, AutoTokenizer, DecisionTransformerModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, DecisionTransformerModel, GPTJForCausalLM
 # utils
 import json
 from torch import nn
@@ -26,7 +26,6 @@ from decision_transformers import decision_tokenizer
 import site
 site.main()
 import pysvelte
-
 
 
 
@@ -50,8 +49,8 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
     return: model, tokenizer, embedding (note: transposed), device
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if device == 'cpu':
-        print("WARNING: you should probably restart on a GPU runtime")
+    # if device == 'cpu':
+    #     print("WARNING: you should probably restart on a GPU runtime")
     if "edbeeching/decision-transformer" in model_name:
         model = DecisionTransformerModel.from_pretrained(model_name).to(device)
         assert embedding_name in [None, "state", "return", "action", "timestep"]
@@ -70,7 +69,7 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
         # emb = model.embed_state.weight.data.detach()
         # emb = model.embed_return.weight.data.detach()
         # normalize embedding emb
-        emb = emb / torch.norm(emb, dim=0)*3
+        emb = emb / torch.norm(emb, dim=0) * 3 # 3 for the color map
         transformer_module_name = "encoder"
 
         tokenizer = decision_tokenizer.DecisionTokenizer(int(emb.shape[1]), name=embedding_name[:3])
@@ -79,7 +78,29 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
         # https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py
         # n_embd is the embedding dimension, but the model has a hidden_size parameter they should match, 
         # but n_embd is set to the default 768
-
+    elif model_name == "EleutherAI/gpt-j-6B":
+        model = GPTJForCausalLM.from_pretrained(
+            model_name=model_name,
+            revision="float16",
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True
+            ).to(device)
+        tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
+        transformer_module_name = "transformer"
+        emb = model.get_output_embeddings().weight.data.T.detach()
+        transformer_module_name = "transformer"
+    elif model_name == "pvduy/openai_summarize_sft_gptj":
+        tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
+        model = AutoModelForCausalLM.from_pretrained(model_name=model_name,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True).to(device)
+        model.config.pad_token_id = tokenizer.bos_token_id
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.bos_token_id
+        tokenizer.padding_side = "left"
+        tokenizer.truncation_side = "left"
+        emb = model.get_output_embeddings().weight.data.T.detach()
+        transformer_module_name = "transformer"
     else:
         model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
         tokenizer = AutoTokenizer.from_pretrained(model_name)

@@ -1,9 +1,10 @@
-nodejs==16
+# node == 16
 torch
 transformers
 datasets
 seaborn
 matplotlib
 tabulate
+accelerate
 git+https://github.com/DalasNoin/PySvelte.git
 #gradio # maybe not needed
