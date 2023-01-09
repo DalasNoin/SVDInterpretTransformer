@@ -11,3 +11,9 @@ Based on a Conjecture Publication
 # Usage
 
 Examples are provided in svd_directions/examples.py
+
+## Todo
+
+- [ ] TopKTable should show information about the layer and head
+- [ ] maybe make it possible to show different embeddings at the same time
+- [ ] show a plot of the correlation between singular values and the cosine similarity of the embeddings(action, state, return, ...)

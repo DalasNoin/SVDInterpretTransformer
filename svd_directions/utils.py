@@ -43,10 +43,8 @@ def convert_to_tokens(indices, tokenizer, extended, extra_values_pos, strip=True
     return res
 
 
-def top_tokens(v_tok, k=100, tokenizer=None, only_english=False, only_ascii=True, with_values=False, 
+def top_tokens(v_tok, tokenizer, k=100, only_english=False, only_ascii=True, with_values=False, 
                exclude_brackets=False, extended=True, extra_values=None, pad_to_maxlen=False):
-    if tokenizer is None:
-        tokenizer = my_tokenizer
     v_tok = deepcopy(v_tok)
     ignored_indices = []
     if only_ascii:

@@ -6,3 +6,4 @@ seaborn
 matplotlib
 tabulate
 git+https://github.com/DalasNoin/PySvelte.git
+#gradio # maybe not needed
