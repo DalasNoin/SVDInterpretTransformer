@@ -6,7 +6,7 @@ import svd_directions
 model_name="edbeeching/decision-transformer-gym-hopper-expert"
 # model_name = "edbeeching/decision-transformer-gym-walker2d-expert"
 
-svd_transformer = svd_directions.SVDTransformer(model_name, embedding_name="state")
+svd_transformer = svd_directions.apply_svd(model_name, embedding_name="state")
 
 #svd_transformer.OV_top_singular_vectors(layer_idx=2, head_idx=0, k=3, N_singular_vectors=15, use_visualization=True)
 N = 40
