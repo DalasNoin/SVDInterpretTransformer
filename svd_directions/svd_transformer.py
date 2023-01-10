@@ -49,6 +49,7 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
     return: model, tokenizer, embedding (note: transposed), device
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    emb_bias = None
     # if device == 'cpu':
     #     print("WARNING: you should probably restart on a GPU runtime")
     if "edbeeching/decision-transformer" in model_name:
@@ -94,6 +95,7 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
         tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
         transformer_module_name = "transformer"
         emb = model.get_output_embeddings().weight.data.T.detach()
+        emb_bias = model.get_output_embeddings().bias.data.detach()
         transformer_module_name = "transformer"
     elif model_name == "pvduy/openai_summarize_sft_gptj":
         tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
@@ -112,18 +114,25 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         emb = model.get_output_embeddings().weight.data.T.detach()
         transformer_module_name = "transformer"
-    return model, tokenizer, emb, device, transformer_module_name
+    
+    model.eval()
+    return model, tokenizer, emb, emb_bias, device, transformer_module_name
 
 
 class SVDTransformer:
     """Class that makes it easy to apply SVD to a transformer model"""
     def __init__(self, model_name="gpt2-medium", embedding_name=None):
         self.model_name = model_name
-        self.model, self.tokenizer, self.emb, self.device, self.transformer_module_name = get_model_tokenizer_embedding(model_name, embedding_name)
+        self.model, self.tokenizer, self.emb, self.emb_bias, self.device, self.transformer_module_name = get_model_tokenizer_embedding(model_name, embedding_name)
+
         self.num_layers, self.num_heads, self.hidden_dim, self.head_size = self.get_model_info()
         self.K_heads, self.V_heads = self.get_mlp_weights()
         self.W_Q_heads, self.W_K_heads, self.W_V_heads, self.W_O_heads = self.get_attention_heads()
-        self.all_tokens = [self.tokenizer.decode([i]) for i in range(self.tokenizer.vocab_size)]
+        self.all_tokens = [self.tokenizer.decode([i]) for i in range(len(self.tokenizer.vocab))]
+        self.vocab_size = len(self.tokenizer.vocab)
+        
+        if self.emb_bias is None:
+            self.emb_bias = torch.zeros(self.vocab_size)
 
     ## These functions prepare the data for SVD
 
@@ -143,7 +152,7 @@ class SVDTransformer:
             ln_2_weight = self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.ln_2.weight").detach()
             K = torch.einsum("oi,i -> oi", K, ln_2_weight)
             
-            V = self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.mlp.c_proj.weight")
+            V = self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.mlp.c_proj.weight").detach()
             Ks.append(K)
             Vs.append(V)
         
@@ -179,7 +188,7 @@ class SVDTransformer:
         U,S,V = torch.linalg.svd(mat)
         Vs = []
         for i in range(N_singular_vectors):
-            acts = V[i,:].float() @ self.emb
+            acts = V[i,:].float() @ self.emb.float()
             Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -190,7 +199,7 @@ class SVDTransformer:
         if with_negative:
             Vs = []
             for i in range(N_singular_vectors):
-                acts = -V[i,:].float() @ self.emb
+                acts = -V[i,:].float() @ self.emb.float()
                 Vs.append(acts)
             if use_visualization:
                 Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -201,13 +210,13 @@ class SVDTransformer:
 
     def OV_top_singular_vectors(self, layer_idx, head_idx, k=20, N_singular_vectors=10, use_visualization=True, with_negative=False, filter="topk", return_OV=False):
         W_V_tmp, W_O_tmp = self.W_V_heads[layer_idx, head_idx, :], self.W_O_heads[layer_idx, head_idx]
-        if k > self.tokenizer.vocab_size:
-            k = self.tokenizer.vocab_size
-        OV = W_V_tmp @ W_O_tmp
+        if k > self.vocab_size:
+            k = self.vocab_size
+        OV = W_V_tmp.float() @ W_O_tmp.float()
         U,S,V = torch.linalg.svd(OV)
         Vs = []
         for i in range(N_singular_vectors):
-            acts = V[i,:].float() @ self.emb
+            acts = V[i,:].float() @ self.emb.float()
             Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -218,7 +227,7 @@ class SVDTransformer:
         if with_negative:
             Vs = []
             for i in range(N_singular_vectors):
-                acts = -V[i,:].float() @ self.emb
+                acts = -V[i,:].float() @ self.emb.float()
                 Vs.append(acts)
             if use_visualization:
                 Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -234,13 +243,13 @@ class SVDTransformer:
         This function computes the top singular vectors of a random matrix and plots the top k tokens for each singular vector.
         The purpose is for comparison with the singular values of the weights of the model.
         """
-        if k > self.tokenizer.vocab_size:
-            k = self.tokenizer.vocab_size
+        if k > self.vocab_size:
+            k = self.vocab_size
         A = torch.randn(size=(self.hidden_dim,self.hidden_dim)).to(self.device)
         U,S,V = torch.linalg.svd(A)
         Vs = []
         for i in range(N):
-            acts = V[i,:].float() @ self.emb
+            acts = V[i,:].float() @ self.emb.float()
             Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -254,7 +263,7 @@ class SVDTransformer:
         if max_rank is None:
             max_rank = self.head_size
         W_V_tmp, W_O_tmp = self.W_V_heads[layer_idx, head_idx, :], self.W_O_heads[layer_idx, head_idx]
-        OV = W_V_tmp @ W_O_tmp
+        OV = W_V_tmp.float() @ W_O_tmp.float()
         U,S,V = torch.linalg.svd(OV)
         if max_rank > len(S):
             max_rank = len(S) -1
@@ -268,13 +277,13 @@ class SVDTransformer:
 
 
     def MLP_K_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True):
-        if k > self.tokenizer.vocab_size:
-            k = self.tokenizer.vocab_size
+        if k > self.vocab_size:
+            k = self.vocab_size
         W_matrix = self.K_heads[layer_idx, :,:]
-        U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
+        U,S,V = torch.linalg.svd(W_matrix.float(),full_matrices=False)
         Vs = []
         for i in range(N_singular_vectors):
-            acts = V[i,:].float() @ self.emb
+            acts = V[i,:].float() @ self.emb.float() # + self.emb_bias
             Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -285,7 +294,7 @@ class SVDTransformer:
         if with_negative:
             Vs = []
             for i in range(N_singular_vectors):
-                acts = -V[i,:].float() @ self.emb
+                acts = -V[i,:].float() @ self.emb.float()
                 Vs.append(acts)
             if use_visualization:
                 Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -294,10 +303,10 @@ class SVDTransformer:
                 Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True) for i in range(len(Vs))]
                 print(tabulate([*zip(*Vs)]))
 
-    
+    # TODO: add this also for the V matrix
     def plot_MLP_singular_values(self,layer_idx, max_rank=None, use_log_scale=True):
         W_matrix = self.K_heads[layer_idx, :,:]
-        U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
+        U,S,V = torch.linalg.svd(W_matrix.float(),full_matrices=False)
         if not max_rank:
             max_rank = len(S)
         if max_rank > len(S):
@@ -318,7 +327,7 @@ class SVDTransformer:
         ax = plt.subplot(111)
         for i in range(self.num_layers):
             W_matrix = self.K_heads[i, :,:]
-            U,S,V = torch.linalg.svd(W_matrix,full_matrices=False)
+            U,S,V = torch.linalg.svd(W_matrix.float(),full_matrices=False)
             if not max_rank:
                 max_rank = len(S)
             if max_rank > len(S):
@@ -335,15 +344,15 @@ class SVDTransformer:
         plt.show()
 
     def MLP_V_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True):
-        if k > self.tokenizer.vocab_size:
-            k = self.tokenizer.vocab_size
+        if k > self.vocab_size:
+            k = self.vocab_size
         with torch.no_grad():
             # todo: doesn't it already have this info in self.V_heads?
-            W_matrix = self.model.get_parameter(f"{self.transformer_module_name}.h.{layer_idx}.mlp.c_proj.weight").detach() # self.V_heads[layer_idx, ...]
-            U,S,Vval = torch.svd(W_matrix)
+            W_matrix = self.V_heads[layer_idx, ...]
+            U,S,Vval = torch.linalg.svd(W_matrix.float())
             Vs = []
             for i in range(N_singular_vectors):
-                acts = Vval.T[i,:].float() @ self.emb
+                acts = Vval.T[i,:].float() @ self.emb.float() # + self.emb_bias
                 Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
@@ -354,7 +363,7 @@ class SVDTransformer:
         if with_negative:
             Vs = []
             for i in range(N_singular_vectors):
-                acts = -Vval.T[i,:].float() @ self.emb
+                acts = -Vval.T[i,:].float() @ self.emb.float()
                 Vs.append(acts)
             if use_visualization:
                 Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
