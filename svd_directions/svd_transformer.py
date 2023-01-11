@@ -94,9 +94,21 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
             ).to(device)
         tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
         transformer_module_name = "transformer"
+        if embedding_name in ["output", None]:
+            emb = model.get_output_embeddings().weight.data.T.detach()
+            emb_bias = model.get_output_embeddings().bias.data.detach()
+        elif embedding_name in ["input"]:
+            emb = model.transformer.wte.weight.data.detach().T
+        else:
+            raise ValueError(f"Embedding_name unknown: {embedding_name}")
+    elif model_name in ["pvduy/openai_summarize_sft_gptj_full_data","pvduy/openai_summarize_ppo_gptj_val_prompt"]:
+        model = AutoModelForCausalLM.from_pretrained(model_name,
+                                            torch_dtype=torch.float16,
+                                            low_cpu_mem_usage=True)
+        tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
+        transformer_module_name = "transformer"
         emb = model.get_output_embeddings().weight.data.T.detach()
         emb_bias = model.get_output_embeddings().bias.data.detach()
-        transformer_module_name = "transformer"
     elif model_name == "pvduy/openai_summarize_sft_gptj":
         tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-j-6B")
         model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=model_name,
@@ -116,14 +128,14 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
         transformer_module_name = "transformer"
     
     model.eval()
-    return model, tokenizer, emb, emb_bias, device, transformer_module_name
+    return model, tokenizer, emb, device, transformer_module_name
 
 
 class SVDTransformer:
     """Class that makes it easy to apply SVD to a transformer model"""
     def __init__(self, model_name="gpt2-medium", embedding_name=None):
         self.model_name = model_name
-        self.model, self.tokenizer, self.emb, self.emb_bias, self.device, self.transformer_module_name = get_model_tokenizer_embedding(model_name, embedding_name)
+        self.model, self.tokenizer, self.emb, self.device, self.transformer_module_name = get_model_tokenizer_embedding(model_name, embedding_name)
 
         self.num_layers, self.num_heads, self.hidden_dim, self.head_size = self.get_model_info()
         self.K_heads, self.V_heads = self.get_mlp_weights()
@@ -131,8 +143,7 @@ class SVDTransformer:
         self.all_tokens = [self.tokenizer.decode([i]) for i in range(len(self.tokenizer.vocab))]
         self.vocab_size = len(self.tokenizer.vocab)
         
-        if self.emb_bias is None:
-            self.emb_bias = torch.zeros(self.vocab_size)
+        self.emb_bias = torch.zeros(self.vocab_size)
 
     ## These functions prepare the data for SVD
 
@@ -165,12 +176,12 @@ class SVDTransformer:
     def get_attention_heads(self):
         qkvs = []
         for j in range(self.num_layers):
-            qkv = self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.attn.c_attn.weight").detach().T
+            qkv = self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.attn.c_attn.weight").detach().T     
             ln_weight_1 = self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.ln_1.weight").detach()
             
             qkv = qkv - torch.mean(qkv, dim=0) 
             qkv = torch.einsum("oi,i -> oi", qkv, ln_weight_1)
-            qkvs.append(qkv.T)
+            qkvs.append(qkv)
 
         W_Q, W_K, W_V = torch.cat(qkvs).chunk(3, dim=-1)
         W_O = torch.cat([self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.attn.c_proj.weight") for j in range(self.num_layers)]).detach()

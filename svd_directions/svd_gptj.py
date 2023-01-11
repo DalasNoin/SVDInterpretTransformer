@@ -37,11 +37,11 @@ class SVDGPTJ(svd_transformer.SVDTransformer):
 
                 selected = selected - torch.mean(selected, dim=0) 
                 selected = torch.einsum("oi,i -> oi", selected, ln_weight_1)
-                selection_all_layers.append(selected.T)
+                selection_all_layers.append(selected)
             selection_all_layers = torch.cat(selection_all_layers)
             qkvs.append(selection_all_layers)
         W_Q, W_K, W_V = qkvs
-        W_O = torch.cat([self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.attn.out_proj.weight") for j in range(self.num_layers)]).detach()
+        W_O = torch.cat([self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.attn.out_proj.weight") for j in range(self.num_layers)]).detach().T
 
         # The following 4 reshapes create two separate dimenions for the head and head size, by default they are combined
         W_V_heads = W_V.reshape(self.num_layers, self.hidden_dim, self.num_heads, self.head_size).permute(0, 2, 1, 3)
