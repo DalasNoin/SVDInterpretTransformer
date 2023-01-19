@@ -12,6 +12,10 @@ Based on a Conjecture Publication
 
 Examples are provided in svd_directions/examples.py
 
+# Blog post
+
+I created a small blog post on this topic on my [blog](https://simonlermen.github.io/interpretability/2023/01/18/SVD-on-Decision-Transformers.html).
+
 ## Todo
 
 - [ ] TopKTable should show information about the layer and head

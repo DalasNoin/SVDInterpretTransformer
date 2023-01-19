@@ -55,26 +55,31 @@ def get_model_tokenizer_embedding(model_name="gpt2-medium", embedding_name=None)
     if "edbeeching/decision-transformer" in model_name:
         # todo: check if layernorm is at the same positions
         model = DecisionTransformerModel.from_pretrained(model_name).to(device)
-        assert embedding_name in [None, "state", "return", "action", "timestep"]
+        assert embedding_name in [None, "state", "return", "action", "timestep", "state_output", "action_input"]
         if embedding_name is None or embedding_name == "state":
             emb = model.embed_state.weight.data.detach()
             # emb = model.predict_state.weight.data.T.detach()
         elif embedding_name == "return":
             emb = model.embed_return.weight.data.detach()
         elif embedding_name == "action":
-            emb = model.embed_action.weight.data.detach()
             emb = model.predict_action[0].weight.data.T.detach()
         elif embedding_name == "timestep":
             emb = model.embed_timestep.weight.data.T.detach()
+        elif embedding_name == "state_output":
+            emb = model.predict_state.weight.data.T.detach()
+        elif embedding_name == "action_input":
+            emb = model.embed_action.weight.data.detach()
         # emb = model.predict_state.weight.data.T.detach()
         # model.predict_state[0].weight.data.T.detach()
         # emb = model.embed_state.weight.data.detach()
         # emb = model.embed_return.weight.data.detach()
         # normalize embedding emb
-        emb = emb / torch.norm(emb, dim=0) * 3 # 3 for the color map
+        emb = emb / torch.norm(emb, dim=0) # 3 for the color map
         transformer_module_name = "encoder"
-
-        tokenizer = decision_tokenizer.DecisionTokenizer(int(emb.shape[1]), name=embedding_name[:3])
+        if "cheetah" in model_name:
+            tokenizer = decision_tokenizer.CheetahTokenizer(int(emb.shape[1]), name=embedding_name[:3])
+        else:
+            tokenizer = decision_tokenizer.DecisionTokenizer(int(emb.shape[1]), name=embedding_name[:3])
         # alternatively look at model._modules.keys()
         model.config.n_embd = model.config.hidden_size # I think there is an error in the config
         # https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/configuration_gpt2.py
@@ -181,7 +186,7 @@ class SVDTransformer:
             
             qkv = qkv - torch.mean(qkv, dim=0) 
             qkv = torch.einsum("oi,i -> oi", qkv, ln_weight_1)
-            qkvs.append(qkv)
+            qkvs.append(qkv.T)
 
         W_Q, W_K, W_V = torch.cat(qkvs).chunk(3, dim=-1)
         W_O = torch.cat([self.model.get_parameter(f"{self.transformer_module_name}.h.{j}.attn.c_proj.weight") for j in range(self.num_layers)]).detach()
@@ -205,7 +210,7 @@ class SVDTransformer:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
             pysvelte.TopKTable(tokens=self.all_tokens, activations=Vs, obj_type="SVD direction", k=k, filter=filter).show()
         else:
-            Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True, tokenizer=self.tokenizer) for i in range(len(Vs))]
+            Vs = [utils.top_tokens(Vs[i].float().cpu(), k=k, pad_to_maxlen=True, tokenizer=self.tokenizer) for i in range(len(Vs))]
             print(tabulate([*zip(*Vs)]))
         if with_negative:
             Vs = []
@@ -219,18 +224,21 @@ class SVDTransformer:
                 Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True, tokenizer=self.tokenizer) for i in range(len(Vs))]
                 print(tabulate([*zip(*Vs)]))
 
-    def OV_top_singular_vectors(self, layer_idx, head_idx, k=20, N_singular_vectors=10, use_visualization=True, with_negative=False, filter="topk", return_OV=False):
+    def OV_top_singular_vectors(self, layer_idx, head_idx, k=20, N_singular_vectors=10, use_visualization=True, with_negative=False, filter="topk", return_OV=False, absolute=False):
         W_V_tmp, W_O_tmp = self.W_V_heads[layer_idx, head_idx, :], self.W_O_heads[layer_idx, head_idx]
         if k > self.vocab_size:
             k = self.vocab_size
         OV = W_V_tmp.float() @ W_O_tmp.float()
         U,S,V = torch.linalg.svd(OV)
+
         Vs = []
         for i in range(N_singular_vectors):
             acts = V[i,:].float() @ self.emb.float()
             Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
+            if absolute:
+                Vs = torch.abs(Vs)
             pysvelte.TopKTable(tokens=self.all_tokens, activations=Vs, layer_labels=[layer_idx], obj_type="SVD direction", k=k, filter=filter).show()
         else:
             Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True, tokenizer=self.tokenizer) for i in range(len(Vs))]
@@ -246,6 +254,7 @@ class SVDTransformer:
             else:
                 Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True, tokenizer=self.tokenizer) for i in range(len(Vs))]
                 print(tabulate([*zip(*Vs)]))
+        
         if return_OV:
             return OV
 
@@ -259,7 +268,7 @@ class SVDTransformer:
         A = torch.randn(size=(self.hidden_dim,self.hidden_dim)).to(self.device)
         U,S,V = torch.linalg.svd(A)
         Vs = []
-        for i in range(N):
+        for i in range(N): 
             acts = V[i,:].float() @ self.emb.float()
             Vs.append(acts)
         if use_visualization:
@@ -287,7 +296,7 @@ class SVDTransformer:
         plt.show()
 
 
-    def MLP_K_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True):
+    def MLP_K_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True, absolute=False):
         if k > self.vocab_size:
             k = self.vocab_size
         W_matrix = self.K_heads[layer_idx, :,:]
@@ -298,6 +307,9 @@ class SVDTransformer:
             Vs.append(acts)
         if use_visualization:
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
+            if absolute:
+                Vs = torch.abs(Vs)
+            
             pysvelte.TopKTable(tokens=self.all_tokens, activations=Vs, layer_labels=[layer_idx], obj_type="SVD direction", k=k, filter="topk").show()
         else:
             Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True) for i in range(len(Vs))]
@@ -354,7 +366,7 @@ class SVDTransformer:
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),fontsize=10)
         plt.show()
 
-    def MLP_V_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True):
+    def MLP_V_top_singular_vectors(self, layer_idx, k=20, N_singular_vectors=10, with_negative = False, use_visualization = True, absolute=False):
         if k > self.vocab_size:
             k = self.vocab_size
         with torch.no_grad():
@@ -366,7 +378,10 @@ class SVDTransformer:
                 acts = Vval.T[i,:].float() @ self.emb.float() # + self.emb_bias
                 Vs.append(acts)
         if use_visualization:
+
             Vs = torch.stack(Vs, dim=1).unsqueeze(1) # n_tokens, n_layers (1), n_directions
+            if absolute:
+                Vs = torch.abs(Vs)
             pysvelte.TopKTable(tokens=self.all_tokens, activations=Vs, layer_labels=[layer_idx], obj_type="SVD direction", k=k, filter="topk").show()
         else:
             Vs = [utils.top_tokens(Vs[i].float().cpu(), k = k, pad_to_maxlen=True) for i in range(len(Vs))]

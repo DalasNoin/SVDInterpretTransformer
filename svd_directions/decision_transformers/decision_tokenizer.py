@@ -10,6 +10,9 @@ class Vocab:
     def items(self):
         return self.vocab
 
+    def __len__(self):
+        return len(self.vocab)
+
 class DecisionTokenizer:
     def __init__(self, vocab_size, name):
         """
@@ -36,7 +39,20 @@ class DecisionTokenizer:
     def convert_ids_to_tokens(self, token_ids: Union[Iterable, int]) -> str:
         return self.decode(token_ids)
 
+class CheetahTokenizer(DecisionTokenizer):
+    def __init__(self, vocab_size, name):
+        super().__init__(vocab_size, name)
 
+    def build_vocab(self):
+        if self.name=="act":
+            vocab = ["bthigh", "bshin", "bfoot", "fthigh", "fshin", "ffoot"]
+        elif self.name=="sta":
+            vocab = ["bodyz", "bodyy", "bthigh", "bshin", "bfoot", "fthigh", "fshin", "ffoot", "bodyx velo", "bodyz velo", "bodyy velo", "bthigh av", "bshin av", "bfoot av", "fthigh av", "fshin av", "ffoot av"]
+        elif self.name=="ret":
+            vocab = ["reward"]
+        else:
+            vocab = super().build_vocab()
+        return vocab
     # def vocab.items(self):
 
 
